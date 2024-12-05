@@ -23,10 +23,8 @@ nombre VARCHAR(80) NOT NULL,
 apellido VARCHAR(80) NOT NULL
 );
 
--- Tablas con FK
 CREATE TABLE usuario (
 id_usuario INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-id_prestamo INT UNSIGNED,
 nombre VARCHAR(80) NOT NULL,
 apellido VARCHAR(80) NOT NULL,
 fecha_nacimiento DATE NOT NULL,
@@ -38,12 +36,12 @@ telefono VARCHAR(15),
 email VARCHAR(50) NOT NULL
 );
 
+-- Tablas con FK
 CREATE TABLE libro (
 id_libro INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 id_autor INT UNSIGNED,
 id_categoria INT UNSIGNED,
 id_editorial INT UNSIGNED,
-id_prestamo INT UNSIGNED,
 titulo VARCHAR(100),
 ano_edicion INT,
 cantidad INT,
@@ -60,6 +58,14 @@ precio_prestamo FLOAT NOT NULL,
 estado BOOLEAN
 );
 
+CREATE TABLE analisis_libros (
+id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+id_libro INT UNSIGNED, 
+titulo_libro VARCHAR(100) NOT NULL,
+autor_libro VARCHAR(160) NOT NULL,
+cantidad_pedidos INT UNSIGNED NOT NULL
+);
+
 -- Modificar tablas creadas anteriormente para agregar las FK
 -- Tabla Libro
 ALTER TABLE libro ADD CONSTRAINT fk_id_autor_libro
@@ -68,18 +74,16 @@ ALTER TABLE libro ADD CONSTRAINT fk_id_categoria_libro
 	FOREIGN KEY(id_categoria) REFERENCES categoria(id_categoria) ON DELETE SET NULL ON UPDATE CASCADE;
 ALTER TABLE libro ADD CONSTRAINT fk_id_editorial_libro
 	FOREIGN KEY(id_editorial) REFERENCES editorial(id_editorial) ON DELETE SET NULL ON UPDATE CASCADE;
-ALTER TABLE libro ADD CONSTRAINT fk_id_prestamo_libro
-	FOREIGN KEY(id_prestamo) REFERENCES prestamo(id_prestamo) ON DELETE SET NULL ON UPDATE CASCADE;
-
--- Tabla Usuario
-ALTER TABLE usuario ADD CONSTRAINT fk_id_prestamo_usuario
-	FOREIGN KEY(id_prestamo) REFERENCES prestamo(id_prestamo) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- Tabla Préstamo
 ALTER TABLE prestamo ADD CONSTRAINT fk_id_libro_prestamo
 	FOREIGN KEY(id_libro) REFERENCES libro(id_libro) ON DELETE SET NULL ON UPDATE CASCADE;
 ALTER TABLE prestamo ADD CONSTRAINT fk_id_usuario_prestamo
 	FOREIGN KEY(id_usuario) REFERENCES usuario(id_usuario) ON DELETE SET NULL ON UPDATE CASCADE;
+    
+-- Tabla Análisis Libro
+ALTER TABLE analisis_libros ADD CONSTRAINT fk_id_libro_analisis
+	FOREIGN KEY(id_libro) REFERENCES libro(id_libro) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- *******************************************************************
 --                   Inserciones de datos
@@ -156,64 +160,45 @@ INSERT INTO prestamo (id_prestamo, id_usuario, id_libro, fecha_prestamo, fecha_d
 (NULL, 7, 10, '2024-09-11', '2024-10-01', FALSE, 20),
 (NULL, 8, 5, '2024-10-10', '2024-11-10', TRUE, 37.2),
 (NULL, 9, 9, '2024-03-20', '2024-04-05', FALSE, 16),
-(NULL, 10, 1, '2024-11-11', '2024-11-30', TRUE, 22.8);
+(NULL, 10, 1, '2024-11-11', '2024-11-30', TRUE, 22.8),
+(NULL, 1, 12, '2024-11-19', '2024-11-29', TRUE, 12.0);
+
+-- Análisis Libros
+INSERT INTO analisis_libros (id_libro, titulo_libro, autor_libro, cantidad_pedidos)
+SELECT l.id_libro, l.titulo AS titulo_libro, CONCAT(a.nombre, ' ', a.apellido) AS autor_libro, 0 AS cantidad_pedidos
+FROM libro l
+JOIN autor a ON l.id_autor = a.id_autor;
 
 
 -- *******************************************************************
 --                   Creación de vistas
 -- *******************************************************************
--- Primero actualizo el campo id_prestamo en las tablas correspondientes para que queden consistentes las vistas
---  tabla Libro
-UPDATE libro 
-SET id_prestamo = (
-    SELECT id_prestamo 
-    FROM prestamo 
-    WHERE prestamo.id_libro = libro.id_libro 
-      AND prestamo.estado = TRUE
-    ORDER BY prestamo.fecha_prestamo DESC
-    LIMIT 1
-)
-WHERE EXISTS (
-    SELECT 1 
-    FROM prestamo 
-    WHERE prestamo.id_libro = Libro.id_libro 
-      AND prestamo.estado = TRUE
-);
--- tabla Usuario
-UPDATE usuario 
-SET id_prestamo = (
-    SELECT id_prestamo 
-    FROM prestamo 
-    WHERE prestamo.id_usuario = usuario.id_usuario 
-      AND prestamo.estado = TRUE
-    ORDER BY prestamo.fecha_prestamo DESC
-    LIMIT 1
-)
-WHERE EXISTS (
-    SELECT 1 
-    FROM prestamo 
-    WHERE prestamo.id_usuario = usuario.id_usuario 
-      AND prestamo.estado = TRUE
-);
 
 -- Esta vista nos muestra los libros que se encuentran prestados
 CREATE VIEW vw_libros_prestados AS (
-	SELECT l.id_libro, l.id_autor, l.id_editorial, l.titulo, p.fecha_prestamo, p.fecha_devolucion
+	SELECT l.id_libro, CONCAT(a.nombre,' ', a.apellido) AS nombre_autor, e.nombre_editorial, l.titulo, 
+			CONCAT(u.nombre, ' ', u.apellido) AS nombre_usuario, p.fecha_prestamo, p.fecha_devolucion
     FROM libro l
+    JOIN autor a ON a.id_autor = l.id_autor
+    JOIN editorial e ON e.id_editorial = l.id_editorial
     JOIN prestamo p ON p.id_libro = l.id_libro
+    JOIN usuario u ON u.id_usuario = p.id_usuario
     WHERE p.estado = TRUE);
-    
 
 -- Esta vista nos muestra los libros que se encuentran disponibles para ser prestados
-CREATE VIEW vw_libros_disponibles AS (SELECT l.id_libro, l.id_autor, l.id_editorial, l.titulo
+CREATE VIEW vw_libros_disponibles AS (
+	SELECT l.id_libro, CONCAT(a.nombre,' ', a.apellido) AS nombre_autor, e.nombre_editorial, l.titulo
     FROM libro l
+    JOIN autor a ON a.id_autor = l.id_autor
+    JOIN editorial e ON e.id_editorial = l.id_editorial
     JOIN prestamo p ON p.id_libro = l.id_libro
     WHERE p.estado = FALSE);
 
 -- Esta vista nos muestra los usuarios que tienen préstamos activos
-CREATE VIEW vw_usuarios_prestamos_activos AS (SELECT u.id_usuario, u.nombre, u.apellido, u.domicilio, u.ciudad, u.provincia, u.email, u.id_prestamo FROM usuario u
+CREATE VIEW vw_usuarios_prestamos_activos AS (SELECT u.id_usuario, u.nombre, u.apellido, u.domicilio, u.ciudad, u.provincia, u.email, p.id_prestamo FROM usuario u
 JOIN prestamo p ON p.id_usuario = u.id_usuario
 WHERE p.estado = TRUE);
+
 
 -- *******************************************************************
 --                   Creación de funciones
@@ -273,15 +258,28 @@ CREATE PROCEDURE sp_insertar_libro(
     IN p_id_autor INT,
     IN p_id_categoria INT,
     IN p_id_editorial INT,
-    IN p_id_prestamo INT,
     IN p_titulo VARCHAR(100),
     IN p_ano_edicion INT,
     IN p_cantidad INT,
     IN p_precio_dia FLOAT
 )
 BEGIN
-    INSERT INTO libro (id_autor, id_categoria, id_editorial, id_prestamo, titulo, ano_edicion, cantidad, precio_dia)
-    VALUES (p_id_autor, p_id_categoria, p_id_editorial, p_id_prestamo, p_titulo, p_ano_edicion, p_cantidad, p_precio_dia);
+    INSERT INTO libro (id_autor, id_categoria, id_editorial, titulo, ano_edicion, cantidad, precio_dia)
+    VALUES (p_id_autor, p_id_categoria, p_id_editorial, p_titulo, p_ano_edicion, p_cantidad, p_precio_dia);
+END //
+DELIMITER ;
+
+-- Procedimiento para devolver un libro
+DELIMITER //
+CREATE PROCEDURE sp_devolver_libro(
+    IN p_id_prestamo INT,
+    IN p_id_libro INT,
+    IN p_id_usuario INT
+)
+BEGIN
+    UPDATE prestamo p
+    SET estado = False
+    WHERE p.id_prestamo = p_id_prestamo AND p.id_libro = p_id_libro AND p.id_usuario = p_id_usuario; 
 END //
 DELIMITER ;
 
@@ -307,3 +305,57 @@ BEGIN
 END //
 DELIMITER ;
 
+-- *******************************************************************
+--                   Creación de triggers
+-- *******************************************************************
+-- Trigger para verificar que un libro tiene stock antes de generar el préstamo, y si no, lanzar un error
+DELIMITER //
+CREATE TRIGGER verificar_stock
+BEFORE INSERT ON prestamo
+FOR EACH ROW
+BEGIN 
+	IF (SELECT cantidad FROM libro l WHERE l.id_libro = NEW.id_libro) = 0  
+	THEN SIGNAL SQLSTATE '45000' 
+        SET MESSAGE_TEXT = 'No se puede realizar el préstamo ya que el libro seleccionado no tiene stock disponible actual.';
+    END IF; 
+END //
+DELIMITER ;
+
+-- Trigger para actualizar (disminuir) el stock en la tabla Libro cada vez que se crea un préstamo
+DELIMITER //
+CREATE TRIGGER disminuir_stock
+AFTER INSERT ON prestamo
+FOR EACH ROW
+BEGIN 
+	UPDATE libro l 
+	SET l.cantidad = l.cantidad - 1
+    WHERE l.id_libro = NEW.id_libro;
+END //
+DELIMITER ;
+
+-- Trigger para actualizar (aumentar) el stock en la tabla Libro cada vez que un libro es devuelto
+DELIMITER //
+CREATE TRIGGER aumentar_stock
+AFTER UPDATE ON prestamo
+FOR EACH ROW
+BEGIN 
+    IF OLD.estado = True AND NEW.estado = False THEN
+		UPDATE libro l 
+		SET l.cantidad = l.cantidad + 1
+		WHERE l.id_libro = NEW.id_libro;
+	END IF;
+END //
+DELIMITER ;
+
+
+-- Trigger para contar la cantidad de veces que un libro es pedido, para luego hacer análisis de esos datos
+DELIMITER //
+CREATE TRIGGER actualizar_cantidad_pedida
+AFTER INSERT ON prestamo
+FOR EACH ROW
+BEGIN
+	UPDATE analisis_libros
+    SET cantidad_pedidos = cantidad_pedidos + 1
+    WHERE id_libro = NEW.id_libro;
+END //
+DELIMITER ;
